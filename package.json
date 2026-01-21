@@ -1,0 +1,22 @@
+{
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  },
+  "scripts": {
+    "start:dev": "concurrently -n API,BOT \"node -r dotenv/config server.js\" \"node -r dotenv/config bot/index.js\"",
+    "seed:products": "node -r dotenv/config api/scripts/ProductSeed.js",
+    "start:prod": "concurrently \"node server.js\" \"node bot/index.js\""
+  },
+  "_moduleAliases": {
+    "bot": "bot",
+    "api": "api/src"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "module-alias": "^2.2.3",
+    "mongoose": "^9.1.1",
+    "node-cron": "^4.2.1"
+  }
+}
