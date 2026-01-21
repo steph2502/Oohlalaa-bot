@@ -3,6 +3,7 @@
     "concurrently": "^9.2.1"
   },
   "scripts": {
+    "start": "npm run start:prod",
     "start:dev": "concurrently -n API,BOT \"node -r dotenv/config server.js\" \"node -r dotenv/config bot/index.js\"",
     "seed:products": "node -r dotenv/config api/scripts/ProductSeed.js",
     "start:prod": "concurrently \"node server.js\" \"node bot/index.js\""
