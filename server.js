@@ -33,7 +33,7 @@ app.use(
 // Regular JSON parsing for all other routes
 app.use(express.json());
 
-const PORT = process.env.API_PORT || 4000;
+const PORT = process.env.PORT || 4000;
 
 /* ==========================
    CONNECT DB & JOBS
