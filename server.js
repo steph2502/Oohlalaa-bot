@@ -1,10 +1,8 @@
 require("module-alias/register");
 require("dotenv").config();
-
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./api/src/config/db");
-
 const userRoutes = require("./api/src/routes/UserRoutes");
 const productRoutes = require("./api/src/routes/ProductRoutes");
 const cartRoutes = require("./api/src/routes/CartRoutes");
@@ -46,14 +44,23 @@ require("./api/src/jobs/cancelExpiredOrders");
 /* ==========================
    ROUTES
 ========================== */
-
 // Base route
-app.get("/", (req, res) => res.send("Oohlala API running"));
+app.get("/", (req, res) => {
+  res.json({ 
+    status: "ok",
+    message: "Oohlala API running",
+    timestamp: new Date().toISOString()
+  });
+});
 
 // Health route
-app.get("/health", (req, res) =>
-  res.json({ ok: true, env: process.env.NODE_ENV || "development" })
-);
+app.get("/health", (req, res) => {
+  res.json({ 
+    ok: true, 
+    env: process.env.NODE_ENV || "development",
+    port: PORT
+  });
+});
 
 // API routes
 app.use("/user", userRoutes);
@@ -66,13 +73,15 @@ app.use("/payment", paymentRoutes);
 app.use("/admin", adminRoutes);
 
 // Internal placeholder
-app.use("/_internal", (req, res) =>
-  res.json({ msg: "internal placeholder" })
-);
+app.use("/_internal", (req, res) => {
+  res.json({ msg: "internal placeholder" });
+});
 
 /* ==========================
    START SERVER
 ========================== */
-app.listen(PORT,'0.0.0.0', () =>
-  console.log(`API running on port ${PORT}`)
-);
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ API running on port ${PORT}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🚀 Server is listening on 0.0.0.0:${PORT}`);
+});
