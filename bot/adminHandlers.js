@@ -196,7 +196,7 @@ function registerAdminHandlers(bot) {
         chunks[i].forEach(p => {
           message += `🧴 *${p.name}*\nCategory: ${p.category}\nSizes:\n`;
           p.sizes?.forEach(s => {
-            message += `  • ${s.size}ml - ₦${s.price} (Stock: ${s.stock})\n`;
+            message += `  • ${s.size}ml - ₦${s.price?.toLocaleString()} (Stock: ${s.stock})\n`;
           });
           message += `ID: \`${p._id}\`\n\n`;
         });
@@ -205,7 +205,7 @@ function registerAdminHandlers(bot) {
         await new Promise(resolve => setTimeout(resolve, 100));
       }
 
-      const menuMsg = await ctx.reply("Choose an action:", { ...productMenu() });
+      await ctx.reply("Choose an action:", { ...productMenu() });
       
       // Store message IDs for potential cleanup (optional enhancement)
       ctx.session = ctx.session || {};
@@ -223,7 +223,311 @@ function registerAdminHandlers(bot) {
     }
   });
 
-  // (Other product management handlers remain unchanged: addproduct, updatestock, removeproduct)
+  /* ==========================
+     ADD PRODUCT
+  ========================== */
+  bot.action("admin_add_product", async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return ctx.answerCbQuery("⛔ Admin only");
+
+    await ctx.answerCbQuery();
+    
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {}
+
+    await ctx.reply(
+      "➕ *Add New Product*\n\n" +
+      "Please send the product details in this format:\n\n" +
+      "```\n" +
+      "NAME: Product Name\n" +
+      "CATEGORY: classic|intense|light|other\n" +
+      "SIZES: 50ml:5000:10,100ml:8000:20,200ml:12000:15\n" +
+      "IMAGE: https://image-url.com/image.jpg\n" +
+      "DESC: Product description here\n" +
+      "```\n\n" +
+      "Format for SIZES: `size:price:stock,size:price:stock`\n" +
+      "Example: `50ml:5000:10` means 50ml size costs ₦5000 with 10 in stock",
+      { parse_mode: "Markdown", ...productMenu() }
+    );
+
+    // Store state to expect product data
+    ctx.session = ctx.session || {};
+    ctx.session.awaitingProductData = true;
+  });
+
+  /* ==========================
+     UPDATE STOCK
+  ========================== */
+  bot.action("admin_update_stock", async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return ctx.answerCbQuery("⛔ Admin only");
+
+    await ctx.answerCbQuery();
+    
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {}
+
+    await ctx.reply(
+      "🔄 *Update Product Stock*\n\n" +
+      "Please send the update details in this format:\n\n" +
+      "```\n" +
+      "ID: product_id_here\n" +
+      "SIZE: 50\n" +
+      "STOCK: 25\n" +
+      "```\n\n" +
+      "This will set the stock for 50ml size to 25 units.",
+      { parse_mode: "Markdown", ...productMenu() }
+    );
+
+    ctx.session = ctx.session || {};
+    ctx.session.awaitingStockUpdate = true;
+  });
+
+  /* ==========================
+     REMOVE PRODUCT
+  ========================== */
+  bot.action("admin_remove_product", async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return ctx.answerCbQuery("⛔ Admin only");
+
+    await ctx.answerCbQuery();
+    
+    try {
+      await ctx.deleteMessage();
+    } catch (err) {}
+
+    await ctx.reply(
+      "🗑️ *Remove Product*\n\n" +
+      "Please send the product ID to remove:\n\n" +
+      "```\nID: product_id_here\n```\n\n" +
+      "⚠️ This action cannot be undone!",
+      { parse_mode: "Markdown", ...productMenu() }
+    );
+
+    ctx.session = ctx.session || {};
+    ctx.session.awaitingProductRemoval = true;
+  });
+
+  /* ==========================
+     TEXT INPUT HANDLERS
+  ========================== */
+  bot.on("text", async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return;
+
+    const text = ctx.message.text;
+
+    // Handle Add Product
+    if (ctx.session?.awaitingProductData) {
+      try {
+        // Parse the product data
+        const nameMatch = text.match(/NAME:\s*(.+)/i);
+        const categoryMatch = text.match(/CATEGORY:\s*(.+)/i);
+        const sizesMatch = text.match(/SIZES:\s*(.+)/i);
+        const imageMatch = text.match(/IMAGE:\s*(.+)/i);
+        const descMatch = text.match(/DESC:\s*(.+)/i);
+
+        if (!nameMatch || !categoryMatch || !sizesMatch) {
+          return ctx.reply("❌ Invalid format. Please include NAME, CATEGORY, and SIZES.");
+        }
+
+        const name = nameMatch[1].trim();
+        const category = categoryMatch[1].trim().toLowerCase();
+        const sizesRaw = sizesMatch[1].trim();
+        const image = imageMatch ? imageMatch[1].trim() : "";
+        const description = descMatch ? descMatch[1].trim() : "";
+
+        // Parse sizes: "50ml:5000:10,100ml:8000:20"
+        const sizes = sizesRaw.split(',').map(s => {
+          const [size, price, stock] = s.trim().split(':');
+          return {
+            size: parseInt(size),
+            price: parseFloat(price),
+            stock: parseInt(stock)
+          };
+        });
+
+        const productData = {
+          name,
+          category,
+          sizes,
+          image,
+          description
+        };
+
+        // Create product via API
+        const adminAxios = createAdminAxios(ctx.from.id);
+        const res = await adminAxios.post('/admin/products', productData);
+
+        ctx.session.awaitingProductData = false;
+
+        await ctx.reply(
+          `✅ Product created successfully!\n\n` +
+          `📦 *${res.data.product.name}*\n` +
+          `Category: ${res.data.product.category}\n` +
+          `ID: \`${res.data.product._id}\``,
+          { parse_mode: "Markdown", ...productMenu() }
+        );
+
+      } catch (err) {
+        console.error(err.response?.data || err.message);
+        ctx.session.awaitingProductData = false;
+        await ctx.reply("❌ Failed to create product. Please try again.", { ...productMenu() });
+      }
+      return;
+    }
+
+    // Handle Update Stock
+    if (ctx.session?.awaitingStockUpdate) {
+      try {
+        const idMatch = text.match(/ID:\s*(.+)/i);
+        const sizeMatch = text.match(/SIZE:\s*(\d+)/i);
+        const stockMatch = text.match(/STOCK:\s*(\d+)/i);
+
+        if (!idMatch || !sizeMatch || !stockMatch) {
+          return ctx.reply("❌ Invalid format. Please include ID, SIZE, and STOCK.");
+        }
+
+        const productId = idMatch[1].trim();
+        const size = parseInt(sizeMatch[1]);
+        const stock = parseInt(stockMatch[1]);
+
+        const adminAxios = createAdminAxios(ctx.from.id);
+        const res = await adminAxios.patch(`/admin/products/${productId}/stock`, {
+          size,
+          stock
+        });
+
+        ctx.session.awaitingStockUpdate = false;
+
+        await ctx.reply(
+          `✅ Stock updated successfully!\n\n` +
+          `📦 ${res.data.product.name}\n` +
+          `Size: ${size}ml\n` +
+          `New Stock: ${stock}`,
+          { parse_mode: "Markdown", ...productMenu() }
+        );
+
+      } catch (err) {
+        console.error(err.response?.data || err.message);
+        ctx.session.awaitingStockUpdate = false;
+        await ctx.reply("❌ Failed to update stock. Please check the product ID and try again.", { ...productMenu() });
+      }
+      return;
+    }
+
+    // Handle Remove Product
+    if (ctx.session?.awaitingProductRemoval) {
+      try {
+        const idMatch = text.match(/ID:\s*(.+)/i);
+
+        if (!idMatch) {
+          return ctx.reply("❌ Invalid format. Please include ID.");
+        }
+
+        const productId = idMatch[1].trim();
+
+        // Send confirmation
+        await ctx.reply(
+          `⚠️ Are you sure you want to delete this product?\n\nID: \`${productId}\`\n\n` +
+          "This action cannot be undone!",
+          {
+            parse_mode: "Markdown",
+            ...Markup.inlineKeyboard([
+              [
+                Markup.button.callback("✅ Yes, Delete", `confirm_delete_${productId}`),
+                Markup.button.callback("❌ Cancel", "admin_products")
+              ]
+            ])
+          }
+        );
+
+        ctx.session.awaitingProductRemoval = false;
+
+      } catch (err) {
+        console.error(err.message);
+        ctx.session.awaitingProductRemoval = false;
+        await ctx.reply("❌ Failed to process request.", { ...productMenu() });
+      }
+      return;
+    }
+  });
+
+  // Confirm product deletion
+  bot.action(/^confirm_delete_(.+)$/, async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return ctx.answerCbQuery("⛔ Admin only");
+
+    await ctx.answerCbQuery();
+
+    const productId = ctx.match[1];
+
+    try {
+      const adminAxios = createAdminAxios(ctx.from.id);
+      await adminAxios.delete(`/admin/products/${productId}`);
+
+      try {
+        await ctx.deleteMessage();
+      } catch (err) {}
+
+      await ctx.reply(
+        `✅ Product deleted successfully!\n\nID: \`${productId}\``,
+        { parse_mode: "Markdown", ...productMenu() }
+      );
+
+    } catch (err) {
+      console.error(err.response?.data || err.message);
+      
+      try {
+        await ctx.deleteMessage();
+      } catch (err) {}
+      
+      await ctx.reply("❌ Failed to delete product. Please check the ID and try again.", { ...productMenu() });
+    }
+  });
+
+  /* ==========================
+     STATISTICS
+  ========================== */
+  bot.action("admin_stats", async (ctx) => {
+    const adminStatus = await isAdmin(ctx.from.id);
+    if (!adminStatus) return ctx.answerCbQuery("⛔ Admin only");
+
+    await ctx.answerCbQuery();
+
+    try {
+      const adminAxios = createAdminAxios(ctx.from.id);
+      const res = await adminAxios.get('/admin/stats');
+      const stats = res.data;
+
+      try {
+        await ctx.deleteMessage();
+      } catch (err) {}
+
+      await ctx.reply(
+        `📊 *Dashboard Statistics*\n\n` +
+        `👥 Total Users: ${stats.totalUsers || 0}\n` +
+        `📦 Total Products: ${stats.totalProducts || 0}\n` +
+        `📋 Total Orders: ${stats.totalOrders || 0}\n` +
+        `💰 Total Revenue: ₦${stats.totalRevenue?.toLocaleString() || 0}\n\n` +
+        `⏳ Processing: ${stats.processingOrders || 0}\n` +
+        `🚚 Shipped: ${stats.shippedOrders || 0}\n` +
+        `✅ Delivered: ${stats.deliveredOrders || 0}`,
+        { parse_mode: "Markdown", ...adminMenu() }
+      );
+
+    } catch (err) {
+      console.error(err.message);
+      
+      try {
+        await ctx.deleteMessage();
+      } catch (err) {}
+      
+      await ctx.reply("❌ Failed to load statistics", { ...adminMenu() });
+    }
+  });
 
   /* ==========================
      ORDER MANAGEMENT
@@ -247,7 +551,7 @@ function registerAdminHandlers(bot) {
     );
   });
 
-  // Show orders helper (with status update buttons and message clearing)
+  // Show orders helper (with status update buttons, dates, and message clearing)
   async function showOrders(ctx, status = null) {
     try {
       const adminAxios = createAdminAxios(ctx.from.id);
@@ -284,24 +588,63 @@ function registerAdminHandlers(bot) {
 
       for (let i = 0; i < chunks.length; i++) {
         for (const order of chunks[i]) {
-          let message = `📦 *Order #${order._id}*\n`;
+          // Format dates
+          const createdDate = order.createdAt 
+            ? new Date(order.createdAt).toLocaleString('en-NG', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : 'N/A';
+
+          const updatedDate = order.updatedAt 
+            ? new Date(order.updatedAt).toLocaleString('en-NG', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })
+            : 'N/A';
+
+          let message = `📦 *Order #${order._id.slice(-8)}*\n\n`;
           message += `👤 Customer: ${order.customerName || order.telegramId}\n`;
-          message += `💰 Total: ₦${order.total}\n`;
+          message += `💰 Total: ₦${order.total?.toLocaleString() || 0}\n`;
           message += `📍 Location: ${order.delivery_location || "N/A"}\n`;
           if (order.delivery_address) message += `📮 Address: ${order.delivery_address}\n`;
           message += `📊 Status: ${order.status}\n`;
-          message += `💳 Payment: ${order.paymentStatus}\n\n🛍 *Items:*\n`;
+          message += `💳 Payment: ${order.paymentStatus}\n\n`;
+          
+          // Add dates
+          message += `📅 *Dates:*\n`;
+          message += `  • Created: ${createdDate}\n`;
+          if (order.updatedAt && order.updatedAt !== order.createdAt) {
+            message += `  • Updated: ${updatedDate}\n`;
+          }
+          
+          message += `\n🛍 *Items:*\n`;
           order.items.forEach(item => {
             const productName = item.product?.name || item.productName || "Unknown";
-            message += `  • ${productName} (${item.size}ml) x${item.quantity}\n`;
+            const itemTotal = (item.price * item.quantity) || 0;
+            message += `  • ${productName} (${item.size}ml) x${item.quantity} - ₦${itemTotal.toLocaleString()}\n`;
           });
 
           // Inline buttons to update status
           const statusButtons = Markup.inlineKeyboard([
-            ["SHIPPED", "DELIVERED", "CANCELLED"]
-          ].map(row => row.map(s => Markup.button.callback(s, `update_order_${order._id}_${s}`))));
+            [
+              Markup.button.callback("🚚 SHIPPED", `update_order_${order._id}_SHIPPED`),
+              Markup.button.callback("✅ DELIVERED", `update_order_${order._id}_DELIVERED`)
+            ],
+            [
+              Markup.button.callback("❌ CANCELLED", `update_order_${order._id}_CANCELLED`),
+              Markup.button.callback("⏳ PROCESSING", `update_order_${order._id}_PROCESSING`)
+            ]
+          ]);
 
           await ctx.reply(message, { parse_mode: "Markdown", ...statusButtons });
+          await new Promise(resolve => setTimeout(resolve, 100)); // Small delay between messages
         }
       }
 
@@ -365,7 +708,7 @@ function registerAdminHandlers(bot) {
 
       // Confirm to admin
       await ctx.reply(
-        `✅ Order ${orderId} status updated to *${newStatus}*`,
+        `✅ Order ${orderId.slice(-8)} status updated to *${newStatus}*`,
         { parse_mode: "Markdown" }
       );
 
@@ -376,19 +719,19 @@ function registerAdminHandlers(bot) {
           
           switch (newStatus) {
             case "SHIPPED":
-              userMessage = `🚚 Hi ${updatedOrder.customerName || "Customer"}, great news! Your order #${orderId} is on its way! 📦\n\nYou should receive it soon. Track your delivery for updates.`;
+              userMessage = `🚚 Hi ${updatedOrder.customerName || "Customer"}, great news! Your order #${orderId.slice(-8)} is on its way! 📦\n\nYou should receive it soon. Track your delivery for updates.`;
               break;
             case "DELIVERED":
-              userMessage = `✅ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId} has been delivered! 🎉\n\nThank you for shopping with us!`;
+              userMessage = `✅ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId.slice(-8)} has been delivered! 🎉\n\nThank you for shopping with us!`;
               break;
             case "CANCELLED":
-              userMessage = `❌ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId} has been cancelled.\n\nIf you have any questions, please contact support.`;
+              userMessage = `❌ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId.slice(-8)} has been cancelled.\n\nIf you have any questions, please contact support.`;
               break;
             case "PROCESSING":
-              userMessage = `⏳ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId} is being processed.\n\nWe'll notify you once it ships!`;
+              userMessage = `⏳ Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId.slice(-8)} is being processed.\n\nWe'll notify you once it ships!`;
               break;
             default:
-              userMessage = `📦 Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId} status is now *${newStatus}*`;
+              userMessage = `📦 Hi ${updatedOrder.customerName || "Customer"}, your order #${orderId.slice(-8)} status is now *${newStatus}*`;
           }
           
           await ctx.telegram.sendMessage(
