@@ -142,7 +142,7 @@ exports.checkoutCart = async (req, res) => {
       },
       {
         headers: {
-          Authorization: `Bearer ${process.env.KORAPAY_WEBHOOK_SECRET}`,
+          Authorization: `Bearer ${process.env.KORAPAY_PUBLIC_KEY}`,
           "Content-Type": "application/json"
         }
       }
