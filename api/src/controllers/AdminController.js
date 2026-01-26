@@ -3,6 +3,7 @@ const axios = require("axios");
 const Admin = require("../models/Admin");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const User = require("../models/User"); // Add User model for stats
 
 /* ==========================
    CHECK IF TELEGRAM USER IS ADMIN
@@ -114,6 +115,7 @@ exports.removeAdmin = async (req, res) => {
 ========================== */
 exports.getStats = async (req, res) => {
   try {
+    const totalUsers = await User.countDocuments();
     const totalProducts = await Product.countDocuments();
     const totalOrders = await Order.countDocuments();
 
@@ -137,6 +139,7 @@ exports.getStats = async (req, res) => {
     });
 
     res.json({
+      totalUsers,
       totalProducts,
       totalOrders,
       totalRevenue,
@@ -160,7 +163,7 @@ exports.getOrders = async (req, res) => {
     const query = status ? { status: status.toUpperCase() } : {};
 
     const orders = await Order.find(query)
-      .populate("items.product") // ✅ ONLY CHANGE
+      .populate("items.product")
       .sort({ createdAt: -1 })
       .limit(50);
 
@@ -177,7 +180,7 @@ exports.getOrders = async (req, res) => {
 exports.getOrder = async (req, res) => {
   try {
     const order = await Order.findById(req.params.orderId)
-      .populate("items.product"); // ✅ ONLY CHANGE
+      .populate("items.product");
 
     if (!order)
       return res.status(404).json({ error: "Order not found" });
@@ -198,7 +201,9 @@ exports.updateOrderStatus = async (req, res) => {
     if (!status)
       return res.status(400).json({ error: "Status is required" });
 
-    const order = await Order.findById(req.params.orderId);
+    const order = await Order.findById(req.params.orderId)
+      .populate("items.product");
+      
     if (!order)
       return res.status(404).json({ error: "Order not found" });
 
@@ -208,6 +213,205 @@ exports.updateOrderStatus = async (req, res) => {
     res.json({ success: true, order });
   } catch (err) {
     console.error("Update order status error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* ==========================
+   PRODUCT MANAGEMENT
+========================== */
+
+/* CREATE PRODUCT */
+exports.createProduct = async (req, res) => {
+  try {
+    const { name, category, sizes, image, description } = req.body;
+
+    // Validation
+    if (!name || !category || !sizes || !Array.isArray(sizes)) {
+      return res.status(400).json({ 
+        error: "name, category, and sizes array are required" 
+      });
+    }
+
+    // Validate sizes format
+    for (const size of sizes) {
+      if (!size.size || !size.price || size.stock === undefined) {
+        return res.status(400).json({ 
+          error: "Each size must have: size, price, and stock" 
+        });
+      }
+    }
+
+    const product = await Product.create({
+      name,
+      category: category.toLowerCase(),
+      sizes,
+      image: image || "",
+      description: description || ""
+    });
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Product created successfully",
+      product 
+    });
+  } catch (err) {
+    console.error("Create product error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* UPDATE PRODUCT */
+exports.updateProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const updates = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid product ID" });
+    }
+
+    const product = await Product.findByIdAndUpdate(
+      productId,
+      updates,
+      { new: true, runValidators: true }
+    );
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Product updated successfully",
+      product 
+    });
+  } catch (err) {
+    console.error("Update product error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* UPDATE PRODUCT STOCK */
+exports.updateProductStock = async (req, res) => {
+  try {
+    const { productId } = req.params;
+    const { size, stock } = req.body;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid product ID" });
+    }
+
+    if (!size || stock === undefined) {
+      return res.status(400).json({ 
+        error: "size and stock are required" 
+      });
+    }
+
+    const product = await Product.findById(productId);
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    // Find and update the specific size
+    const sizeObj = product.sizes.find(s => s.size === parseInt(size));
+    if (!sizeObj) {
+      return res.status(404).json({ 
+        error: `Size ${size}ml not found for this product` 
+      });
+    }
+
+    sizeObj.stock = parseInt(stock);
+    await product.save();
+
+    res.json({ 
+      success: true, 
+      message: `Stock updated for ${size}ml to ${stock} units`,
+      product 
+    });
+  } catch (err) {
+    console.error("Update stock error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* DELETE PRODUCT */
+exports.deleteProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid product ID" });
+    }
+
+    const product = await Product.findByIdAndDelete(productId);
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      message: "Product deleted successfully",
+      deletedProduct: {
+        id: product._id,
+        name: product.name
+      }
+    });
+  } catch (err) {
+    console.error("Delete product error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* GET ALL PRODUCTS (Admin view with full details) */
+exports.getProducts = async (req, res) => {
+  try {
+    const { category, search } = req.query;
+    let query = {};
+
+    if (category) {
+      query.category = category.toLowerCase();
+    }
+
+    if (search) {
+      query.name = { $regex: search, $options: 'i' };
+    }
+
+    const products = await Product.find(query).sort({ createdAt: -1 });
+
+    res.json({ 
+      success: true, 
+      count: products.length,
+      products 
+    });
+  } catch (err) {
+    console.error("Get products error:", err.message);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/* GET SINGLE PRODUCT */
+exports.getProduct = async (req, res) => {
+  try {
+    const { productId } = req.params;
+
+    if (!mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ error: "Invalid product ID" });
+    }
+
+    const product = await Product.findById(productId);
+
+    if (!product) {
+      return res.status(404).json({ error: "Product not found" });
+    }
+
+    res.json({ 
+      success: true, 
+      product 
+    });
+  } catch (err) {
+    console.error("Get product error:", err.message);
     res.status(500).json({ error: err.message });
   }
 };
