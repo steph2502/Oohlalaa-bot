@@ -47,9 +47,9 @@ async function safeEditMessage(ctx, text, markup = {}) {
 // ==========================
 function mainMenu() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🧴 Classic Perfume Oils", "cat_classic")],
-    [Markup.button.callback("🌸 Premium Perfume Oils", "cat_premium")],
-    [Markup.button.callback("✨ Luxury Perfume Oils", "cat_luxury")],
+    [Markup.button.callback("🧴 Classic Perfume Oils", "cat_classic_0")],
+    [Markup.button.callback("🌸 Premium Perfume Oils", "cat_premium_0")],
+    [Markup.button.callback("✨ Luxury Perfume Oils", "cat_luxury_0")],
     [Markup.button.callback("📦 View Full Fragrance List", "full_list_0")],
     [Markup.button.callback("⏳ Out of Stock / Preorder", "view_preorder_0")],
     [Markup.button.callback("🛒 View Cart", "view_cart")],
@@ -82,28 +82,56 @@ bot.start(async (ctx) => {
 });
 
 // ==========================
-// CATEGORY → PRODUCTS
+// PAGINATION CONSTANT
 // ==========================
-async function sendCategory(ctx, category, title) {
+const PAGE_SIZE = 5;
+
+// ==========================
+// CATEGORY → PRODUCTS (PAGINATED)
+// ==========================
+function categoryTitle(category) {
+  if (category === "classic") return "🧴 Classic Perfume Oils";
+  if (category === "premium") return "🌸 Premium Perfume Oils";
+  if (category === "luxury") return "✨ Luxury Perfume Oils";
+  return "Fragrances";
+}
+
+async function sendCategoryPage(ctx, category, page) {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   try {
     const res = await axios.get(`${process.env.API_URL}/products/category/${category}`);
-    const products = res.data;
+    const products = res.data || [];
 
-    const buttons = products.map(p => {
-      const inStock = p.sizes?.length > 0;
-      return [
-        Markup.button.callback(
-          inStock ? p.name : `${p.name} (Preorder)`,
-          inStock ? `product_${p._id}` : `preorder_${p._id}`
-        )
-      ];
-    });
+    const totalPages = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
+    const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
+    const slice = products.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+
+    if (!slice.length) {
+      return safeEditMessage(
+        ctx,
+        `No products found in this category yet.`,
+        { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) }
+      );
+    }
+
+    const buttons = slice.map(p => [
+      Markup.button.callback(p.name, `product_${p._id}`)
+    ]);
+
+    const nav = [];
+    if (clampedPage > 0) {
+      nav.push(Markup.button.callback("⬅️ Prev", `cat_${category}_${clampedPage - 1}`));
+    }
+    if (clampedPage < totalPages - 1) {
+      nav.push(Markup.button.callback("Next ➡️", `cat_${category}_${clampedPage + 1}`));
+    }
+    if (nav.length) buttons.push(nav);
+
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
 
     await safeEditMessage(
       ctx,
-      `*${title}*\n\nSelect a fragrance:`,
+      `${categoryTitle(category)} (Page ${clampedPage + 1}/${totalPages})\n\nSelect a fragrance:`,
       { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
     );
   } catch (err) {
@@ -112,26 +140,33 @@ async function sendCategory(ctx, category, title) {
   }
 }
 
-bot.action("cat_classic", ctx => sendCategory(ctx, "classic", "🧴 Classic Perfume Oils"));
-bot.action("cat_premium", ctx => sendCategory(ctx, "premium", "🌸 Premium Perfume Oils"));
-bot.action("cat_luxury", ctx => sendCategory(ctx, "luxury", "✨ Luxury Perfume Oils"));
+bot.action(/^cat_(classic|premium|luxury)_(\d+)$/, async (ctx) => {
+  const category = ctx.match[1];
+  const page = Number(ctx.match[2] || "0");
+  await sendCategoryPage(ctx, category, page);
+});
+
+// (Optional backward-compatible handlers if old callbacks ever show up)
+bot.action("cat_classic", (ctx) => sendCategoryPage(ctx, "classic", 0));
+bot.action("cat_premium", (ctx) => sendCategoryPage(ctx, "premium", 0));
+bot.action("cat_luxury", (ctx) => sendCategoryPage(ctx, "luxury", 0));
 
 // ==========================
 // FULL LIST (PAGINATED)
 // ==========================
-const PAGE_SIZE = 5;
 bot.action(/^full_list_(\d+)$/, async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   const page = Number(ctx.match[1]);
   try {
     const res = await axios.get(`${process.env.API_URL}/products`);
-    const products = res.data;
+    const products = res.data || [];
 
-    const totalPages = Math.ceil(products.length / PAGE_SIZE);
-    const slice = products.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+    const totalPages = Math.max(1, Math.ceil(products.length / PAGE_SIZE));
+    const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
+    const slice = products.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
 
     const buttons = slice.map(p => {
-      const inStock = p.sizes?.length > 0;
+      const inStock = p.sizes?.some(s => s.stock > 0);
       return [
         Markup.button.callback(
           inStock ? p.name : `${p.name} (Preorder)`,
@@ -141,15 +176,15 @@ bot.action(/^full_list_(\d+)$/, async (ctx) => {
     });
 
     const nav = [];
-    if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `full_list_${page - 1}`));
-    if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `full_list_${page + 1}`));
+    if (clampedPage > 0) nav.push(Markup.button.callback("⬅️ Prev", `full_list_${clampedPage - 1}`));
+    if (clampedPage < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `full_list_${clampedPage + 1}`));
     if (nav.length) buttons.push(nav);
 
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
 
     await safeEditMessage(
       ctx,
-      `📦 *All Fragrances* (Page ${page + 1}/${totalPages})`,
+      `📦 *All Fragrances* (Page ${clampedPage + 1}/${totalPages})`,
       { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
     );
   } catch (err) {
@@ -169,6 +204,7 @@ bot.action(/^product_(.+)$/, async (ctx) => {
     const product = res.data;
 
     if (!product.sizes || product.sizes.length === 0) {
+      // Treat no sizes as preorder
       return ctx.reply("⚠️ This product is currently unavailable or on preorder.");
     }
 
@@ -368,6 +404,61 @@ bot.action("confirm_address", async (ctx) => {
 });
 
 // ==========================
+// PREORDER LIST (PAGINATED)
+// ==========================
+bot.action(/^view_preorder_(\d+)$/, async (ctx) => {
+  if (ctx.callbackQuery) await ctx.answerCbQuery();
+  const page = Number(ctx.match[1]);
+
+  try {
+    const res = await axios.get(`${process.env.API_URL}/products`);
+    const products = res.data || [];
+
+    // Treat products with no in-stock sizes as preorder
+    const preorderProducts = products.filter(p => {
+      if (!p.sizes || p.sizes.length === 0) return true;
+      return !p.sizes.some(s => s.stock > 0);
+    });
+
+    if (!preorderProducts.length) {
+      return safeEditMessage(
+        ctx,
+        "⏳ There are currently no items on preorder.",
+        { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) }
+      );
+    }
+
+    const totalPages = Math.max(1, Math.ceil(preorderProducts.length / PAGE_SIZE));
+    const clampedPage = Math.min(Math.max(page, 0), totalPages - 1);
+    const slice = preorderProducts.slice(clampedPage * PAGE_SIZE, (clampedPage + 1) * PAGE_SIZE);
+
+    const buttons = slice.map(p => [
+      Markup.button.callback(`${p.name} (Preorder)`, `preorder_${p._id}`)
+    ]);
+
+    const nav = [];
+    if (clampedPage > 0) {
+      nav.push(Markup.button.callback("⬅️ Prev", `view_preorder_${clampedPage - 1}`));
+    }
+    if (clampedPage < totalPages - 1) {
+      nav.push(Markup.button.callback("Next ➡️", `view_preorder_${clampedPage + 1}`));
+    }
+    if (nav.length) buttons.push(nav);
+
+    buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
+
+    await safeEditMessage(
+      ctx,
+      `⏳ *Preorder / Out of Stock* (Page ${clampedPage + 1}/${totalPages})\n\nSelect a fragrance:`,
+      { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
+    );
+  } catch (err) {
+    console.error(err.message);
+    await ctx.reply("❌ Failed to load preorder list.");
+  }
+});
+
+// ==========================
 // REMOVE ITEM
 // ==========================
 bot.action(/^remove_(.+)_(.+)$/, async (ctx) => {
@@ -384,11 +475,15 @@ bot.action(/^remove_(.+)_(.+)$/, async (ctx) => {
 });
 
 // ==========================
-// PREORDER
+// PREORDER ITEM → CONTACT MESSAGE
 // ==========================
 bot.action(/^preorder_(.+)$/, async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
-  await safeEditMessage(ctx, "📦 This item is on preorder. Contact @t3hila to order.", { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) });
+  await safeEditMessage(
+    ctx,
+    "📦 This item is on preorder. Contact @t3hila to order.",
+    { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) }
+  );
 });
 
 // ==========================
@@ -396,7 +491,11 @@ bot.action(/^preorder_(.+)$/, async (ctx) => {
 // ==========================
 bot.action("contact_support", async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
-  await safeEditMessage(ctx, "📞 Please contact @t3hila for support.", { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) });
+  await safeEditMessage(
+    ctx,
+    "📞 Please contact @t3hila for support.",
+    { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) }
+  );
 });
 
 // ==========================
@@ -418,7 +517,7 @@ bot.action("start_checkout", async (ctx) => {
   const telegramId = ctx.from.id.toString();
   const customerName = `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim();
 
-  // Get admin IDs from .env
+  // Get admin IDs from .env (if needed elsewhere)
   const adminIds = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim());
 
   // Check if the user has set a delivery address
@@ -439,18 +538,22 @@ bot.action("start_checkout", async (ctx) => {
     });
     const checkoutUrl = checkoutRes.data.checkoutUrl;
 
-    // Reply to user
+    // Build share link for friends & family
+    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(checkoutUrl)}&text=${encodeURIComponent("Please help me pay for my Oohlala Fragrances order 💛")}`;
+
+    // Reply to user with pay + share buttons
     await ctx.reply("💳 Here is your secure payment link:", {
-      ...Markup.inlineKeyboard([[Markup.button.url("Pay Now", checkoutUrl)]])
+      ...Markup.inlineKeyboard([
+        [Markup.button.url("💳 Pay Now", checkoutUrl)],
+        [Markup.button.url("🔗 Share Payment Link", shareUrl)]
+      ])
     });
 
-  
   } catch (err) {
     console.error(err.response?.data || err.message);
     await ctx.reply("❌ Failed to start checkout.");
   }
 });
-
 
 // ==========================
 // PERSISTENT COMMANDS
@@ -459,7 +562,6 @@ async function setupCommands() {
   try {
     await bot.telegram.setMyCommands([
       { command: "start", description: "Start / display options" },
-      
     ]);
     console.log("✅ Bot commands set");
   } catch (err) {
