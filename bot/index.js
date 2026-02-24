@@ -47,9 +47,9 @@ async function safeEditMessage(ctx, text, markup = {}) {
 // ==========================
 function mainMenu() {
   return Markup.inlineKeyboard([
-    [Markup.button.callback("🧴 Classic Perfume Oils", "cat_classic_0")],
-    [Markup.button.callback("🌸 Premium Perfume Oils", "cat_premium_0")],
-    [Markup.button.callback("✨ Luxury Perfume Oils", "cat_luxury_0")],
+    [Markup.button.callback("🧴 Classic Perfume Oils", "cat_classic")],
+    [Markup.button.callback("🌸 Premium Perfume Oils", "cat_premium")],
+    [Markup.button.callback("✨ Luxury Perfume Oils", "cat_luxury")],
     [Markup.button.callback("📦 View Full Fragrance List", "full_list_0")],
     [Markup.button.callback("⏳ Out of Stock / Preorder", "view_preorder_0")],
     [Markup.button.callback("🛒 View Cart", "view_cart")],
@@ -82,41 +82,28 @@ bot.start(async (ctx) => {
 });
 
 // ==========================
-// CATEGORY → PRODUCTS (PAGINATED)
+// CATEGORY → PRODUCTS
 // ==========================
-const CAT_PAGE_SIZE = 5;
-
-async function sendCategoryPage(ctx, category, title, page) {
+async function sendCategory(ctx, category, title) {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   try {
     const res = await axios.get(`${process.env.API_URL}/products/category/${category}`);
     const products = res.data;
 
-    const totalPages = Math.ceil(products.length / CAT_PAGE_SIZE);
-    const slice = products.slice(page * CAT_PAGE_SIZE, (page + 1) * CAT_PAGE_SIZE);
-
-    const buttons = slice.map(p => {
+    const buttons = products.map(p => {
       const inStock = p.sizes?.length > 0;
       return [
         Markup.button.callback(
           inStock ? p.name : `${p.name} (Preorder)`,
-          inStock ? `product_${p._id}` : `preorder_item_${p._id}`
+          inStock ? `product_${p._id}` : `preorder_${p._id}`
         )
       ];
     });
-
-    const nav = [];
-    if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `cat_${category}_${page - 1}`));
-    if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `cat_${category}_${page + 1}`));
-    if (nav.length) buttons.push(nav);
-
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
-
-    const pageInfo = totalPages > 1 ? ` (Page ${page + 1}/${totalPages})` : "";
 
     await safeEditMessage(
       ctx,
-      `*${title}*${pageInfo}\n\nSelect a fragrance:`,
+      `*${title}*\n\nSelect a fragrance:`,
       { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
     );
   } catch (err) {
@@ -125,16 +112,9 @@ async function sendCategoryPage(ctx, category, title, page) {
   }
 }
 
-// Category actions with pagination
-bot.action(/^cat_classic_(\d+)$/, (ctx) =>
-  sendCategoryPage(ctx, "classic", "🧴 Classic Perfume Oils", Number(ctx.match[1]))
-);
-bot.action(/^cat_premium_(\d+)$/, (ctx) =>
-  sendCategoryPage(ctx, "premium", "🌸 Premium Perfume Oils", Number(ctx.match[1]))
-);
-bot.action(/^cat_luxury_(\d+)$/, (ctx) =>
-  sendCategoryPage(ctx, "luxury", "✨ Luxury Perfume Oils", Number(ctx.match[1]))
-);
+bot.action("cat_classic", ctx => sendCategory(ctx, "classic", "🧴 Classic Perfume Oils"));
+bot.action("cat_premium", ctx => sendCategory(ctx, "premium", "🌸 Premium Perfume Oils"));
+bot.action("cat_luxury", ctx => sendCategory(ctx, "luxury", "✨ Luxury Perfume Oils"));
 
 // ==========================
 // FULL LIST (PAGINATED)
@@ -155,7 +135,7 @@ bot.action(/^full_list_(\d+)$/, async (ctx) => {
       return [
         Markup.button.callback(
           inStock ? p.name : `${p.name} (Preorder)`,
-          inStock ? `product_${p._id}` : `preorder_item_${p._id}`
+          inStock ? `product_${p._id}` : `preorder_${p._id}`
         )
       ];
     });
@@ -175,93 +155,6 @@ bot.action(/^full_list_(\d+)$/, async (ctx) => {
   } catch (err) {
     console.error(err.message);
     await ctx.reply("❌ Failed to load full list.");
-  }
-});
-
-// ==========================
-// PREORDER LIST (PAGINATED)
-// ==========================
-const PREORDER_PAGE_SIZE = 5;
-
-bot.action(/^view_preorder_(\d+)$/, async (ctx) => {
-  if (ctx.callbackQuery) await ctx.answerCbQuery();
-  const page = Number(ctx.match[1]);
-  try {
-    const res = await axios.get(`${process.env.API_URL}/products`);
-    const allProducts = res.data;
-
-    // Filter only out-of-stock / preorder items (no sizes or empty sizes)
-    const preorderProducts = allProducts.filter(p => !p.sizes || p.sizes.length === 0);
-
-    if (preorderProducts.length === 0) {
-      return safeEditMessage(
-        ctx,
-        "✅ Great news! All items are currently in stock. No preorder items at the moment.",
-        { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) }
-      );
-    }
-
-    const totalPages = Math.ceil(preorderProducts.length / PREORDER_PAGE_SIZE);
-    const slice = preorderProducts.slice(page * PREORDER_PAGE_SIZE, (page + 1) * PREORDER_PAGE_SIZE);
-
-    const buttons = slice.map(p => [
-      Markup.button.callback(`⏳ ${p.name}`, `preorder_item_${p._id}`)
-    ]);
-
-    const nav = [];
-    if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `view_preorder_${page - 1}`));
-    if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `view_preorder_${page + 1}`));
-    if (nav.length) buttons.push(nav);
-
-    buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
-
-    await safeEditMessage(
-      ctx,
-      `⏳ *Out of Stock / Preorder Items* (Page ${page + 1}/${totalPages})\n\nThese items are currently unavailable but can be pre-ordered. Tap any item for details.`,
-      { parse_mode: "Markdown", ...Markup.inlineKeyboard(buttons) }
-    );
-  } catch (err) {
-    console.error(err.message);
-    await ctx.reply("❌ Failed to load preorder list.");
-  }
-});
-
-// ==========================
-// PREORDER ITEM DETAIL
-// ==========================
-bot.action(/^preorder_item_(.+)$/, async (ctx) => {
-  if (ctx.callbackQuery) await ctx.answerCbQuery();
-  const productId = ctx.match[1];
-  try {
-    const res = await axios.get(`${process.env.API_URL}/products/${productId}`);
-    const product = res.data;
-
-    await safeEditMessage(
-      ctx,
-      `⏳ *${product.name}*\n\nThis fragrance is currently *out of stock* and available for preorder.\n\nTo place a preorder, please contact *@t3hila* directly on Telegram.\n\nMention the fragrance name and your preferred size when reaching out! 💛`,
-      {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-          [Markup.button.url("📩 Contact @t3hila", "https://t.me/t3hila")],
-          [Markup.button.callback("⬅️ Back to Preorder List", "view_preorder_0")],
-          [Markup.button.callback("🏠 Main Menu", "back_to_menu")]
-        ])
-      }
-    );
-  } catch (err) {
-    console.error(err.message);
-    // Fallback if product fetch fails
-    await safeEditMessage(
-      ctx,
-      `⏳ This fragrance is currently *out of stock* and available for preorder.\n\nPlease contact *@t3hila* to place your preorder. 💛`,
-      {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-          [Markup.button.url("📩 Contact @t3hila", "https://t.me/t3hila")],
-          [Markup.button.callback("⬅️ Back", "view_preorder_0")]
-        ])
-      }
-    );
   }
 });
 
@@ -491,6 +384,14 @@ bot.action(/^remove_(.+)_(.+)$/, async (ctx) => {
 });
 
 // ==========================
+// PREORDER
+// ==========================
+bot.action(/^preorder_(.+)$/, async (ctx) => {
+  if (ctx.callbackQuery) await ctx.answerCbQuery();
+  await safeEditMessage(ctx, "📦 This item is on preorder. Contact @t3hila to order.", { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) });
+});
+
+// ==========================
 // CONTACT SUPPORT
 // ==========================
 bot.action("contact_support", async (ctx) => {
@@ -538,29 +439,18 @@ bot.action("start_checkout", async (ctx) => {
     });
     const checkoutUrl = checkoutRes.data.checkoutUrl;
 
-    // Build share text and URL
-    const shareText = encodeURIComponent(
-      `💛 Pay for my Oohlala Fragrances order here:\n${checkoutUrl}`
-    );
-    const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(checkoutUrl)}&text=${shareText}`;
+    // Reply to user
+    await ctx.reply("💳 Here is your secure payment link:", {
+      ...Markup.inlineKeyboard([[Markup.button.url("Pay Now", checkoutUrl)]])
+    });
 
-    // Reply to user with payment link + share button
-    await ctx.reply(
-      "💳 *Your secure payment link is ready!*\n\nYou can also share it with someone paying on your behalf 👇",
-      {
-        parse_mode: "Markdown",
-        ...Markup.inlineKeyboard([
-          [Markup.button.url("💳 Pay Now", checkoutUrl)],
-          [Markup.button.url("🔗 Share Payment Link", shareUrl)]
-        ])
-      }
-    );
-
+  
   } catch (err) {
     console.error(err.response?.data || err.message);
     await ctx.reply("❌ Failed to start checkout.");
   }
 });
+
 
 // ==========================
 // PERSISTENT COMMANDS
@@ -569,6 +459,7 @@ async function setupCommands() {
   try {
     await bot.telegram.setMyCommands([
       { command: "start", description: "Start / display options" },
+      
     ]);
     console.log("✅ Bot commands set");
   } catch (err) {
