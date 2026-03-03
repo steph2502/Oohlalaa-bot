@@ -11,7 +11,7 @@ if (!process.env.BOT_TOKEN) {
 }
 
 // ==========================
-// DEBUG MIDDLEWARE - ADD THIS FIRST
+// DEBUG MIDDLEWARE
 // ==========================
 bot.use(async (ctx, next) => {
   if (ctx.message?.text) {
@@ -58,16 +58,10 @@ function mainMenu() {
 }
 
 // ==========================
-// REGISTER ADMIN HANDLERS EARLY
+// REGISTER ADMIN HANDLERS
 // ==========================
 registerAdminHandlers(bot);
 console.log("✅ Admin handlers registered");
-
-// TEST COMMAND (remove this after testing)
-bot.command("test", (ctx) => {
-  console.log("🧪 Test command works!");
-  ctx.reply("Test command received! User ID: " + ctx.from.id);
-});
 
 // ==========================
 // START BOT
@@ -190,7 +184,7 @@ bot.action(/^view_preorder_(\d+)$/, async (ctx) => {
     const res = await axios.get(`${process.env.API_URL}/products`);
     const allProducts = res.data;
 
-    // Filter only out-of-stock / preorder items (no sizes or empty sizes)
+    // Filter only out-of-stock / preorder items
     const preorderProducts = allProducts.filter(p => !p.sizes || p.sizes.length === 0);
 
     if (preorderProducts.length === 0) {
@@ -250,7 +244,6 @@ bot.action(/^preorder_item_(.+)$/, async (ctx) => {
     );
   } catch (err) {
     console.error(err.message);
-    // Fallback if product fetch fails
     await safeEditMessage(
       ctx,
       `⏳ This fragrance is currently *out of stock* and available for preorder.\n\nPlease contact *@t3hila* to place your preorder. 💛`,
@@ -384,7 +377,6 @@ async function handleDeliverySelection(ctx, label) {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   const telegramId = ctx.from.id.toString();
 
-  // set user state for address input
   userStates[telegramId] = { step: "ENTER_ADDRESS", delivery_location: label };
 
   await ctx.reply(
@@ -429,7 +421,6 @@ bot.on("text", async (ctx) => {
   const telegramId = ctx.from.id.toString();
   const state = userStates[telegramId];
   
-  // ONLY handle text if user is in address entry state
   if (!state || state.step !== "ENTER_ADDRESS") return;
 
   state.address = ctx.message.text.trim();
@@ -517,10 +508,6 @@ bot.action("start_checkout", async (ctx) => {
   const telegramId = ctx.from.id.toString();
   const customerName = `${ctx.from.first_name || ""} ${ctx.from.last_name || ""}`.trim();
 
-  // Get admin IDs from .env
-  const adminIds = (process.env.ADMIN_TELEGRAM_IDS || "").split(",").map(id => id.trim());
-
-  // Check if the user has set a delivery address
   const cartRes = await axios.get(`${process.env.API_URL}/cart/${telegramId}`);
   const cart = cartRes.data.cart;
 
@@ -531,20 +518,17 @@ bot.action("start_checkout", async (ctx) => {
   }
 
   try {
-    // Send checkout request to API
     const checkoutRes = await axios.post(`${process.env.API_URL}/orders/checkout`, {
       telegramId,
       customerName
     });
     const checkoutUrl = checkoutRes.data.checkoutUrl;
 
-    // Build share text and URL
     const shareText = encodeURIComponent(
       `💛 Pay for my Oohlala Fragrances order here:\n${checkoutUrl}`
     );
     const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(checkoutUrl)}&text=${shareText}`;
 
-    // Reply to user with payment link + share button
     await ctx.reply(
       "💳 *Your secure payment link is ready!*\n\nYou can also share it with someone paying on your behalf 👇",
       {
@@ -568,7 +552,7 @@ bot.action("start_checkout", async (ctx) => {
 async function setupCommands() {
   try {
     await bot.telegram.setMyCommands([
-      { command: "start", description: "Start / display options" },
+      { command: "start", description: "Start / display options" }
     ]);
     console.log("✅ Bot commands set");
   } catch (err) {
