@@ -34,31 +34,51 @@ app.use(express.json());
 const PORT = process.env.PORT || 4000;
 
 /* ==========================
-   CONNECT DB & JOBS
+   CONNECT DB
 ========================== */
 connectDB();
 
-// 🔁 START BACKGROUND JOBS (AFTER DB CONNECT)
-require("./api/src/jobs/cancelExpiredOrders");
+/* ==========================
+   BACKGROUND JOBS
+========================== */
+const { initCronJobs } = require("./api/src/jobs/cancelExpiredOrders");
+
+/* ==========================
+   TELEGRAM BOT
+========================== */
+if (!process.env.BOT_TOKEN) {
+  console.warn("⚠️ BOT_TOKEN not set. Bot will not start.");
+} else {
+  const { bot, setupCommands } = require("./bot/index");
+
+  setupCommands().finally(() => {
+    bot.launch();
+    console.log("🤖 Bot is running!");
+    initCronJobs(bot);
+  });
+
+  process.once("SIGINT", () => bot.stop("SIGINT"));
+  process.once("SIGTERM", () => bot.stop("SIGTERM"));
+}
 
 /* ==========================
    ROUTES
 ========================== */
 // Base route
 app.get("/", (req, res) => {
-  res.json({ 
+  res.json({
     status: "ok",
     message: "Oohlala API running",
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 
 // Health route
 app.get("/health", (req, res) => {
-  res.json({ 
-    ok: true, 
+  res.json({
+    ok: true,
     env: process.env.NODE_ENV || "development",
-    port: PORT
+    port: PORT,
   });
 });
 
@@ -80,8 +100,8 @@ app.use("/_internal", (req, res) => {
 /* ==========================
    START SERVER
 ========================== */
-app.listen(PORT, '0.0.0.0', () => {
+app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ API running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
   console.log(`🚀 Server is listening on 0.0.0.0:${PORT}`);
 });
