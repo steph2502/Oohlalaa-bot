@@ -1,14 +1,10 @@
 require("dotenv").config();
 const { Telegraf, Markup } = require("telegraf");
 const axios = require("axios");
-const { initCronJobs } = require("../api/src/jobs/cancelExpiredOrders");
 const { registerAdminHandlers } = require("./adminHandlers");
 
+// ✅ Bot is created here but NOT launched here — server.js handles launch
 const bot = new Telegraf(process.env.BOT_TOKEN || "");
-
-if (!process.env.BOT_TOKEN) {
-  console.warn("⚠️ BOT_TOKEN not set. Bot will not start.");
-}
 
 // ==========================
 // DEBUG MIDDLEWARE
@@ -28,7 +24,7 @@ bot.use(async (ctx, next) => {
 // ==========================
 // USER STATE (FOR DELIVERY ADDRESS FLOW)
 // ==========================
-const userStates = {}; // Track delivery step per user
+const userStates = {};
 
 // ==========================
 // HELPER: SAFE EDIT MESSAGE
@@ -64,7 +60,7 @@ registerAdminHandlers(bot);
 console.log("✅ Admin handlers registered");
 
 // ==========================
-// START BOT
+// START COMMAND
 // ==========================
 bot.start(async (ctx) => {
   console.log("🆔 /start from user:", ctx.from.id);
@@ -103,7 +99,6 @@ async function sendCategoryPage(ctx, category, title, page) {
     if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `cat_${category}_${page - 1}`));
     if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `cat_${category}_${page + 1}`));
     if (nav.length) buttons.push(nav);
-
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
 
     const pageInfo = totalPages > 1 ? ` (Page ${page + 1}/${totalPages})` : "";
@@ -119,7 +114,6 @@ async function sendCategoryPage(ctx, category, title, page) {
   }
 }
 
-// Category actions with pagination
 bot.action(/^cat_classic_(\d+)$/, (ctx) =>
   sendCategoryPage(ctx, "classic", "🧴 Classic Perfume Oils", Number(ctx.match[1]))
 );
@@ -134,6 +128,7 @@ bot.action(/^cat_luxury_(\d+)$/, (ctx) =>
 // FULL LIST (PAGINATED)
 // ==========================
 const PAGE_SIZE = 5;
+
 bot.action(/^full_list_(\d+)$/, async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   const page = Number(ctx.match[1]);
@@ -158,7 +153,6 @@ bot.action(/^full_list_(\d+)$/, async (ctx) => {
     if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `full_list_${page - 1}`));
     if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `full_list_${page + 1}`));
     if (nav.length) buttons.push(nav);
-
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
 
     await safeEditMessage(
@@ -183,8 +177,6 @@ bot.action(/^view_preorder_(\d+)$/, async (ctx) => {
   try {
     const res = await axios.get(`${process.env.API_URL}/products`);
     const allProducts = res.data;
-
-    // Filter only out-of-stock / preorder items
     const preorderProducts = allProducts.filter(p => !p.sizes || p.sizes.length === 0);
 
     if (preorderProducts.length === 0) {
@@ -206,7 +198,6 @@ bot.action(/^view_preorder_(\d+)$/, async (ctx) => {
     if (page > 0) nav.push(Markup.button.callback("⬅️ Prev", `view_preorder_${page - 1}`));
     if (page < totalPages - 1) nav.push(Markup.button.callback("Next ➡️", `view_preorder_${page + 1}`));
     if (nav.length) buttons.push(nav);
-
     buttons.push([Markup.button.callback("⬅️ Back", "back_to_menu")]);
 
     await safeEditMessage(
@@ -376,9 +367,7 @@ bot.command("view_cart", viewCart);
 async function handleDeliverySelection(ctx, label) {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   const telegramId = ctx.from.id.toString();
-
   userStates[telegramId] = { step: "ENTER_ADDRESS", delivery_location: label };
-
   await ctx.reply(
     `📍 *${label}*\n\nPlease type your *full delivery address*.\n\nExample:\nBlock D, Room 214`,
     { parse_mode: "Markdown" }
@@ -407,10 +396,13 @@ bot.action("delivery_interstate", async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
   await safeEditMessage(ctx,
     "🚛 *Interstate Delivery*\n\nPlease contact @t3hila for pricing and details.",
-    { parse_mode: "Markdown", ...Markup.inlineKeyboard([
-      [Markup.button.callback("⬅️ Back", "set_delivery")],
-      [Markup.button.callback("📞 Contact Support", "contact_support")]
-    ]) }
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([
+        [Markup.button.callback("⬅️ Back", "set_delivery")],
+        [Markup.button.callback("📞 Contact Support", "contact_support")]
+      ])
+    }
   );
 });
 
@@ -420,7 +412,6 @@ bot.action("delivery_interstate", async (ctx) => {
 bot.on("text", async (ctx) => {
   const telegramId = ctx.from.id.toString();
   const state = userStates[telegramId];
-  
   if (!state || state.step !== "ENTER_ADDRESS") return;
 
   state.address = ctx.message.text.trim();
@@ -455,7 +446,6 @@ bot.action("confirm_address", async (ctx) => {
       delivery_location: state.delivery_location,
       delivery_address: state.address
     });
-
     delete userStates[telegramId];
     await ctx.reply("✅ Delivery address saved.");
     await viewCart(ctx);
@@ -473,7 +463,11 @@ bot.action(/^remove_(.+)_(.+)$/, async (ctx) => {
   const telegramId = ctx.from.id.toString();
   const [, productId, size] = ctx.match;
   try {
-    await axios.post(`${process.env.API_URL}/cart/remove`, { telegramId, productId, size: Number(size) });
+    await axios.post(`${process.env.API_URL}/cart/remove`, {
+      telegramId,
+      productId,
+      size: Number(size)
+    });
     await viewCart(ctx);
   } catch (err) {
     console.error(err.response?.data || err.message);
@@ -486,7 +480,9 @@ bot.action(/^remove_(.+)_(.+)$/, async (ctx) => {
 // ==========================
 bot.action("contact_support", async (ctx) => {
   if (ctx.callbackQuery) await ctx.answerCbQuery();
-  await safeEditMessage(ctx, "📞 Please contact @t3hila for support.", { ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]]) });
+  await safeEditMessage(ctx, "📞 Please contact @t3hila for support.", {
+    ...Markup.inlineKeyboard([[Markup.button.callback("⬅️ Back", "back_to_menu")]])
+  });
 });
 
 // ==========================
@@ -539,7 +535,6 @@ bot.action("start_checkout", async (ctx) => {
         ])
       }
     );
-
   } catch (err) {
     console.error(err.response?.data || err.message);
     await ctx.reply("❌ Failed to start checkout.");
@@ -547,7 +542,8 @@ bot.action("start_checkout", async (ctx) => {
 });
 
 // ==========================
-// PERSISTENT COMMANDS
+// SETUP COMMANDS
+// ✅ Exported so server.js can call it before bot.launch()
 // ==========================
 async function setupCommands() {
   try {
@@ -560,14 +556,6 @@ async function setupCommands() {
   }
 }
 
-// ==========================
-// LAUNCH BOT
-// ==========================
-setupCommands().finally(() => {
-  bot.launch();
-  console.log("🤖 Bot is running!");
-  initCronJobs(bot);
-});
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+// ✅ Export bot and setupCommands — server.js will call bot.launch()
+// ✅ Removed: bot.launch(), initCronJobs(), process.once() — all moved to server.js
+module.exports = { bot, setupCommands };
