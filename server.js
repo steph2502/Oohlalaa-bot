@@ -3,6 +3,8 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 const connectDB = require("./api/src/config/db");
+
+// Route Imports
 const userRoutes = require("./api/src/routes/UserRoutes");
 const productRoutes = require("./api/src/routes/ProductRoutes");
 const cartRoutes = require("./api/src/routes/CartRoutes");
@@ -11,97 +13,96 @@ const adminRoutes = require("./api/src/routes/AdminRoutes");
 const paymentRoutes = require("./api/src/routes/PaymentRoutes");
 
 const app = express();
-
-/* ==========================
-   MIDDLEWARE
-========================== */
-app.use(cors());
-
-// ✅ CRITICAL: Apply raw body capture ONLY to webhook routes
-// This must come BEFORE the regular express.json() middleware
-app.use(
-  "/payment/webhook",
-  express.json({
-    verify: (req, res, buf) => {
-      req.rawBody = buf;
-    },
-  })
-);
-
-// Regular JSON parsing for all other routes
-app.use(express.json());
-
 const PORT = process.env.PORT || 4000;
 
 /* ==========================
-   CONNECT DB
+   1. MIDDLEWARE & WEBHOOKS
 ========================== */
-connectDB();
+app.use(cors());
+
+/**
+ * ⚡ CRITICAL: Webhook Raw Body Capture
+ * We handle this SPECIFICALLY before the global express.json() 
+ * to ensure the stream isn't consumed before we grab the raw buffer.
+ */
+app.post(
+  "/payment/webhook",
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf; // Korapay/Stripe need this for signature verification
+    },
+  }),
+  (req, res, next) => {
+    // This passes the request into the paymentRoutes logic below
+    next();
+  }
+);
+
+// Regular JSON parsing for all other standard API routes
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 /* ==========================
-   BACKGROUND JOBS
+   2. DATABASE & JOBS
 ========================== */
+connectDB();
 const { initCronJobs } = require("./api/src/jobs/cancelExpiredOrders");
 
 /* ==========================
-   TELEGRAM BOT
+   3. TELEGRAM BOT (Non-Blocking)
 ========================== */
 if (!process.env.BOT_TOKEN) {
   console.warn("⚠️ BOT_TOKEN not set. Bot will not start.");
 } else {
   const { bot, setupCommands } = require("./bot/index");
 
-  setupCommands().finally(() => {
-    bot.launch();
-    console.log("🤖 Bot is running!");
-    initCronJobs(bot);
-  });
+  // We wrap this in an async block so it doesn't block the Express 'Listen'
+  (async () => {
+    try {
+      await setupCommands();
+      // Launching the bot starts long-polling, which is an infinite loop.
+      // By keeping it here, Express can still finish its startup.
+      bot.launch();
+      console.log("🤖 Telegram Bot: ACTIVE (Long Polling)");
+      initCronJobs(bot);
+    } catch (err) {
+      console.error("❌ Telegram Bot failed to start:", err);
+    }
+  })();
 
+  // Enable graceful stop
   process.once("SIGINT", () => bot.stop("SIGINT"));
   process.once("SIGTERM", () => bot.stop("SIGTERM"));
 }
 
 /* ==========================
-   ROUTES
+   4. ROUTES
 ========================== */
-// Base route
 app.get("/", (req, res) => {
   res.json({
     status: "ok",
     message: "Oohlala API running",
+    version: "1.0.1",
     timestamp: new Date().toISOString(),
   });
 });
 
-// Health route
+// Railway Health Check Route
 app.get("/health", (req, res) => {
-  res.json({
-    ok: true,
-    env: process.env.NODE_ENV || "development",
-    port: PORT,
-  });
+  res.status(200).send("OK");
 });
 
-// API routes
 app.use("/user", userRoutes);
 app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
 app.use("/orders", orderRoutes);
-app.use("/payment", paymentRoutes);
-
-// 🔐 Admin routes
+app.use("/payment", paymentRoutes); // This will handle /payment/webhook
 app.use("/admin", adminRoutes);
 
-// Internal placeholder
-app.use("/_internal", (req, res) => {
-  res.json({ msg: "internal placeholder" });
-});
-
 /* ==========================
-   START SERVER
+   5. START SERVER
 ========================== */
+// We bind to 0.0.0.0 specifically for Railway's networking layer
 app.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ API running on port ${PORT}`);
-  console.log(`🌍 Environment: ${process.env.NODE_ENV || "development"}`);
-  console.log(`🚀 Server is listening on 0.0.0.0:${PORT}`);
+  console.log(`✅ Server is officially listening on port ${PORT}`);
 });
