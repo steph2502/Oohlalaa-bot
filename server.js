@@ -13,81 +13,36 @@ const adminRoutes = require("./api/src/routes/AdminRoutes");
 const paymentRoutes = require("./api/src/routes/PaymentRoutes");
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 8080; // Changed default to 8080 to match Railway logs
 
 /* ==========================
    1. MIDDLEWARE & WEBHOOKS
 ========================== */
 app.use(cors());
 
-/**
- * ⚡ CRITICAL: Webhook Raw Body Capture
- * We handle this SPECIFICALLY before the global express.json() 
- * to ensure the stream isn't consumed before we grab the raw buffer.
- */
+// CRITICAL: Webhook Raw Body Capture (Must stay BEFORE general express.json)
 app.post(
   "/payment/webhook",
   express.json({
     verify: (req, res, buf) => {
-      req.rawBody = buf; // Korapay/Stripe need this for signature verification
+      req.rawBody = buf;
     },
   }),
   (req, res, next) => {
-    // This passes the request into the paymentRoutes logic below
     next();
   }
 );
 
-// Regular JSON parsing for all other standard API routes
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
 /* ==========================
-   2. DATABASE & JOBS
-========================== */
-connectDB();
-const { initCronJobs } = require("./api/src/jobs/cancelExpiredOrders");
-
-/* ==========================
-   3. TELEGRAM BOT (Non-Blocking)
-========================== */
-if (!process.env.BOT_TOKEN) {
-  console.warn("⚠️ BOT_TOKEN not set. Bot will not start.");
-} else {
-  const { bot, setupCommands } = require("./bot/index");
-
-  // We wrap this in an async block so it doesn't block the Express 'Listen'
-  (async () => {
-    try {
-      await setupCommands();
-      // Launching the bot starts long-polling, which is an infinite loop.
-      // By keeping it here, Express can still finish its startup.
-      bot.launch();
-      console.log("🤖 Telegram Bot: ACTIVE (Long Polling)");
-      initCronJobs(bot);
-    } catch (err) {
-      console.error("❌ Telegram Bot failed to start:", err);
-    }
-  })();
-
-  // Enable graceful stop
-  process.once("SIGINT", () => bot.stop("SIGINT"));
-  process.once("SIGTERM", () => bot.stop("SIGTERM"));
-}
-
-/* ==========================
-   4. ROUTES
+   2. ROUTES (Defined before heavy startup)
 ========================== */
 app.get("/", (req, res) => {
-  res.json({
-    status: "ok",
-    message: "Oohlala API running",
-    version: "1.0.1",
-    timestamp: new Date().toISOString(),
-  });
+  res.json({ status: "ok", message: "Oohlala API running" });
 });
 
-// Railway Health Check Route
 app.get("/health", (req, res) => {
   res.status(200).send("OK");
 });
@@ -96,13 +51,44 @@ app.use("/user", userRoutes);
 app.use("/products", productRoutes);
 app.use("/cart", cartRoutes);
 app.use("/orders", orderRoutes);
-app.use("/payment", paymentRoutes); // This will handle /payment/webhook
+app.use("/payment", paymentRoutes);
 app.use("/admin", adminRoutes);
 
 /* ==========================
-   5. START SERVER
+   3. START SERVER FIRST 🚀
 ========================== */
-// We bind to 0.0.0.0 specifically for Railway's networking layer
+// We listen IMMEDIATELY so Railway's health check passes.
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server is officially listening on port ${PORT}`);
+  
+  // 4. AFTER the server is up, connect DB and Bot
+  startBackgroundServices();
 });
+
+/* ==========================
+   4. BACKGROUND SERVICES
+========================== */
+async function startBackgroundServices() {
+  try {
+    // Connect to Database
+    await connectDB();
+    console.log("📦 MongoDB connected");
+
+    // Start Telegram Bot
+    if (process.env.BOT_TOKEN) {
+      const { bot, setupCommands } = require("./bot/index");
+      const { initCronJobs } = require("./api/src/jobs/cancelExpiredOrders");
+
+      await setupCommands();
+      bot.launch();
+      console.log("🤖 Telegram Bot: ACTIVE");
+      initCronJobs(bot);
+
+      // Graceful stop
+      process.once("SIGINT", () => bot.stop("SIGINT"));
+      process.once("SIGTERM", () => bot.stop("SIGTERM"));
+    }
+  } catch (err) {
+    console.error("❌ Startup Error during background services:", err);
+  }
+}
